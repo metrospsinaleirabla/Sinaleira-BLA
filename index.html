@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sinaleira BLOCO A - Metrô-SP</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --primary: #007bff;
+      --primary-dark: #0056b3;
+      --bg: #f2f2f2;
+      --text: #222;
+    }
+
+    body {
+      margin: 0;
+      background-color: var(--bg);
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      padding: 20px;
+      width: 100%;
+      max-width: 500px;
+      text-align: center;
+      box-sizing: border-box;
+    }
+
+    .img-container {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .img-container img {
+      width: 120px;
+      height: auto;
+    }
+
+    h1 {
+      font-size: 1.6em;
+      margin: 10px 0 20px;
+      color: var(--text);
+    }
+
+    button {
+      width: 90%;
+      max-width: 300px;
+      padding: 15px;
+      margin: 10px auto;
+      font-size: 1.2em;
+      color: white;
+      background-color: var(--primary);
+      border: none;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    button:active {
+      background-color: var(--primary-dark);
+    }
+
+    #status {
+      margin-top: 20px;
+      font-weight: bold;
+      font-size: 1.1em;
+      color: var(--text);
+    }
+
+    #ipinfo, #preciseLocation, #warning {
+      margin-top: 15px;
+      font-size: 0.95em;
+      color: #444;
+    }
+
+    #warning {
+      color: red;
+      font-weight: bold;
+    }
+
+    #trem {
+      margin: 25px auto;
+      width: 90%;
+      max-width: 300px;
+      display: none;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .blink {
+      animation: blink-animation 1s steps(2, start) infinite;
+    }
+
+    @keyframes blink-animation {
+      50% { opacity: 0; }
+    }
+
+    /* Botão discreto */
+    #resetBtn {
+      opacity: 0.3;
+      font-size: 0.8em;
+      width: auto;
+      padding: 5px 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <div class="img-container">
+      <img src="metro.jpg" alt="Símbolo Metrô-SP">
+    </div>
+
+    <h1>Sinaleira BLOCO A - Metrô-SP</h1>
+
+    <button onclick="sendCommand('onsinaleirametro123')">🔴 Ligar SINALEIRA</button>
+    <button onclick="sendCommand('offsinaleirametro123')">⚫ Desligar SINALEIRA</button>
+
+    <div id="status">🔄 Aguardando conexão com o broker...</div>
+
+    <div id="preciseLocation">📍 Buscando localização exata...</div>
+    <div id="warning"></div>
+
+    <img id="trem" src="trementrando.webp" alt="Trem entrando">
+  </div>
+
+  <script>
+    let locationAuthorized = false;
+
+    const options = {
+      clean: true,
+      connectTimeout: 4000,
+      reconnectPeriod: 4000
+    };
+
+    const client = mqtt.connect("wss://broker.emqx.io:8084/mqtt", options);
+    const topic = "controle/sinaleirametro";
+
+    client.on("connect", () => {
+      console.log("✅ Conectado ao broker EMQX");
+      document.getElementById("status").textContent = "✅ Conectado! Aguardando comandos...";
+      client.subscribe(topic);
+    });
+
+    client.on("error", (err) => {
+      console.error("❌ Erro na conexão:", err);
+      document.getElementById("status").textContent = "❌ Erro ao conectar: " + err.message;
+    });
+
+    client.on("message", (receivedTopic, message) => {
+      if (receivedTopic === topic) {
+        const payload = message.toString().trim().toLowerCase();
+        console.log("📥 Mensagem recebida:", payload);
+
+        const isOnCommand = payload === "onsinaleirametro123" || payload === "onsinalmetro123";
+        const isOffCommand = payload === "offsinaleirametro123" || payload === "offsinalmetro123";
+
+        if (isOnCommand || isOffCommand) {
+          const simbolo = isOnCommand ? "🔴" : "⚫";
+          const texto = isOnCommand ? "LIGADA" : "DESLIGADA";
+          document.getElementById("status").textContent = `${simbolo} Sinaleira ${texto}`;
+          toggleTrem(isOnCommand);
+        }
+      }
+    });
+
+    function sendCommand(cmd) {
+      if (!locationAuthorized) {
+        document.getElementById("warning").textContent = "⚠️ Comando bloqueado: Você precisa estar no Jabaquara (SP).";
+        return;
+      }
+
+      if (client.connected) {
+        client.publish(topic, cmd, { retain: true });
+        document.getElementById("warning").textContent = "";
+      } else {
+        document.getElementById("status").textContent = "⚠️ Broker desconectado!";
+        toggleTrem(false);
+      }
+    }
+
+    function toggleTrem(show) {
+      const trem = document.getElementById("trem");
+      if (show) {
+        trem.style.display = "block";
+        trem.classList.add("blink");
+      } else {
+        trem.style.display = "none";
+        trem.classList.remove("blink");
+      }
+    }
+
+    window.onload = getLocation;
+
+    function getLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(successLocation, errorLocation);
+      } else {
+        document.getElementById("preciseLocation").textContent =
+          "⚠️ Geolocalização não suportada neste navegador.";
+      }
+    }
+
+    function successLocation(position) {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+        .then(res => res.json())
+        .then(data => {
+          const address = data.address;
+          const bairro = address.suburb || address.neighbourhood || address.city_district || '';
+          const cidade = address.city || address.town || address.village || '';
+          const estado = address.state || '';
+          const pais = address.country || '';
+
+          const localString = `${bairro}, ${cidade}, ${estado}, ${pais}`;
+          document.getElementById("preciseLocation").textContent = `📍 Localização exata: ${localString}`;
+
+          if (
+            bairro.toLowerCase().includes("jabaquara") &&
+            cidade.toLowerCase() === "são paulo" &&
+            estado.toLowerCase() === "são paulo"
+          ) {
+            locationAuthorized = true;
+            document.getElementById("warning").textContent = "";
+          } else {
+            locationAuthorized = false;
+            document.getElementById("warning").textContent =
+              "⚠️ Comando bloqueado: Fora da área permitida (Jabaquara, São Paulo).";
+          }
+        })
+        .catch(() => {
+          document.getElementById("preciseLocation").textContent =
+            "⚠️ Não foi possível obter detalhes da localização.";
+        });
+    }
+
+    function errorLocation(err) {
+      document.getElementById("preciseLocation").textContent =
+        "⚠️ Erro ao obter localização: " + err.message;
+    }
+  </script>
+</body>
+</html>
